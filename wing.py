@@ -14,6 +14,9 @@ aileron_chordwise_clearance = 0.6
 aileron_pin_depth = 5.
 aileron_max_deflection = radians(60)
 
+reinforcement_interval = 40
+reinforcement_width = 0.4
+
 wing = WingSectionGenerator(taper_ratio=1.0, washout=0, dihedral=0, sweep=0)
 airfoil = wing.airfoil
 
@@ -34,14 +37,14 @@ def get_inside_section(Z1,Z2):
     wp = wp.loft(combine=True, ruled=True)
     return wp
 
-def generate_wing_internal_volume():
+def generate_wing_inner_volume():
     inside_wing_sections = [get_inside_section(Z1,Z2) for Z1,Z2 in zip(Z[:-1], Z[1:])]
     inside_wing = inside_wing_sections[0]
     for section in inside_wing_sections[1:]:
         inside_wing = inside_wing.union(section)
     return inside_wing
 
-def generate_wing_volume():
+def generate_wing_outer_volume():
     outside_wing_sections = [get_section(Z1,Z2) for Z1,Z2 in zip(Z[:-1], Z[1:])]
 
     outside_wing = outside_wing_sections[0]
@@ -63,7 +66,7 @@ def get_hinge_start_workplane(offset=0):
 
 def generate_hinge_pin():
     wp = get_hinge_start_workplane(aileron_pin_depth)
-    return wp.circle(aileron_pin_radius).extrude(aileron_length*wing.wing_length)
+    return wp.circle(aileron_pin_radius).extrude(aileron_length*wing.wing_length + 2*aileron_pin_depth)
 
 def generate_aileron_spanwise_cut():
     cut_inside_radius = aileron_pin_radius+aileron_hinge_thickness
@@ -129,31 +132,41 @@ def generate_aileron_chordwise_cuts():
 
     return wp
 
+def generate_reinforcements():
+    base_reinforcement = cq.Workplane('XY', origin=(0,0,-wing.wing_length/2)).box(wing.root_chord*10,wing.root_chord*10,reinforcement_width)
+
+    reinforcements = base_reinforcement.rotate((0,0,0),(0,1,0),60) + base_reinforcement.rotate((0,0,0),(0,1,0),-60)
+    for i in range(1,int(2*wing.wing_length/reinforcement_interval)):
+        reinforcements += base_reinforcement.translate((0,0,reinforcement_interval*i)).rotate((0,0,0),(0,1,0),60)
+        reinforcements += base_reinforcement.translate((0,0,reinforcement_interval*i)).rotate((0,0,0),(0,1,0),-60)
+
+    return reinforcements
 
 # generate the wing volume and wing internal volume
-wing_volume = generate_wing_volume()
-wing_internal_volume = wing_volume-wing_volume.shell(-skin_thickness)
-#wing_internal_volume = generate_wing_internal_volume()
+wing_outer_volume = generate_wing_outer_volume()
+wing_inner_volume = wing_outer_volume-wing_outer_volume.shell(-skin_thickness)
+wing_inner_volume = generate_wing_inner_volume()
 
 # cut hinge pin out
 hinge_pin = generate_hinge_pin()
-wing_volume -= hinge_pin
-wing_internal_volume -= hinge_pin+hinge_pin.shell(skin_thickness)
+wing_outer_volume -= hinge_pin
+wing_inner_volume -= hinge_pin+hinge_pin.shell(skin_thickness)
 
 # cut spanwise_cut
 spanwise_cut = generate_aileron_spanwise_cut()
-wing_volume -= spanwise_cut
-wing_internal_volume -= spanwise_cut+spanwise_cut.shell(skin_thickness)
+wing_outer_volume -= spanwise_cut
+wing_inner_volume -= spanwise_cut+spanwise_cut.shell(skin_thickness)
 
 # cut chordwise cut
 chordwise_cuts = generate_aileron_chordwise_cuts()
-wing_volume -= chordwise_cuts
+wing_outer_volume -= chordwise_cuts
 for solid in chordwise_cuts.solids().all():
-    wing_internal_volume -= solid+solid.shell(skin_thickness)
+    wing_inner_volume -= solid+solid.shell(skin_thickness)
 
-wing_volume -= cq.Workplane('XY').box(500,500,100)
+featured_wing = wing_outer_volume-(generate_reinforcements() & wing_inner_volume)
+
 del solid
 del chordwise_cuts
 del spanwise_cut
-del hinge_pin
-#del wing_volume
+#del hinge_pin
+#del wing_outer_volume
