@@ -24,9 +24,13 @@ class WingSectionGenerator:
         chord = self.getChordLength(Z)
         return [x*chord+offset for x in polygonutil.rotatePoints(points,twist)]
 
-    def getWingSection(self,Z):
+    def getAirfoil(self,Z):
         assert Z >= 0 and Z <= self.wing_length
         return self.applyTransformations(Z,self.airfoil.normSurface)
+
+    def getOffsetAirfoil(self,Z,offset):
+        assert Z >= 0 and Z <= self.wing_length
+        return polygonutil.shrinkPolygon(self.applyTransformations(Z,self.airfoil.normSurface), -offset)
 
     def getCamber(self,Z):
         assert Z >= 0 and Z <= self.wing_length
@@ -36,9 +40,17 @@ class WingSectionGenerator:
         assert Z >= 0 and Z <= self.wing_length
         return self.applyTransformations(Z,self.airfoil.normChordLine)
 
+    def getCamberPoint(self,d,Z):
+        assert Z >= 0 and Z <= self.wing_length
+        return self.applyTransformations(Z,[self.airfoil.getNormCamberPoint(d)])[0]
+
+    def getLineAcrossCamber(self,d,lineAngle,Z):
+        assert Z >= 0 and Z <= self.wing_length
+        return self.applyTransformations(Z,self.airfoil.getNormLineAcrossCamber(d,lineAngle))
+
 if __name__ == "__main__":
     wing_generator = WingSectionGenerator()
     print(wing_generator.getChordLength(100.))
-    print(wing_generator.getWingSection(100.))
+    print(wing_generator.getAirfoil(100.))
     print(wing_generator.getCamber(100.))
     print(wing_generator.getChord(100.))

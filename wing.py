@@ -1,31 +1,37 @@
 from WingSectionGenerator import *
 import cadquery as cq
+from math import *
 
 skin_thickness = 0.8
 
 aileron_start_chord = 0.8
 aileron_length = 0.6
 aileron_start_norm_span = 0.2
-aileron_hinge_radius = 1.
+aileron_pin_radius = 0.5
+aileron_hinge_thickness = 2.
+aileron_hinge_clearance = 0.6
+aileron_chordwise_clearance = 0.6
 aileron_pin_depth = 5.
+aileron_max_deflection = radians(60)
 
-section_generator = WingSectionGenerator()
-airfoil = section_generator.airfoil
+wing = WingSectionGenerator(taper_ratio=1.0, washout=0, dihedral=0, sweep=0)
+airfoil = wing.airfoil
 
-Z = np.linspace(0,section_generator.wing_length,2)
+
+Z = np.linspace(0,wing.wing_length,2)
 
 def get_section(Z1,Z2):
-    wp = cq.Workplane('XY', origin=(0,0,Z1)).polyline(section_generator.getAirfoil(Z1)).close()
+    wp = cq.Workplane('XY', origin=(0,0,Z1)).polyline(wing.getAirfoil(Z1)).close()
     wp = wp.workplane(offset=Z2-Z1)
-    wp = wp.polyline(section_generator.getAirfoil(Z2)).close().offset2D(skin_thickness, 'intersection')
-    wp = wp.loft(combine=True)
+    wp = wp.polyline(wing.getAirfoil(Z2)).close()
+    wp = wp.loft(combine=True, ruled=True)
     return wp
 
 def get_inside_section(Z1,Z2):
-    wp = cq.Workplane('XY', origin=(0,0,Z1)).polyline(section_generator.getAirfoil(Z1)).close()
+    wp = cq.Workplane('XY', origin=(0,0,Z1)).polyline(wing.getOffsetAirfoil(Z1,-skin_thickness)).close()
     wp = wp.workplane(offset=Z2-Z1)
-    wp = wp.polyline(section_generator.getAirfoil(Z2)).close().offset2D(skin_thickness, 'intersection')
-    wp = wp.loft(combine=True)
+    wp = wp.polyline(wing.getOffsetAirfoil(Z2,-skin_thickness)).close()
+    wp = wp.loft(combine=True, ruled=True)
     return wp
 
 def generate_wing_internal_volume():
@@ -43,20 +49,111 @@ def generate_wing_volume():
         outside_wing = outside_wing.union(section)
     return outside_wing
 
-def generate_hinge():
-    hinge_line_start_Z = aileron_start_norm_span*section_generator.wing_length-aileron_pin_depth
-    hinge_line_end_Z = (aileron_start_norm_span+aileron_length)*section_generator.wing_length+aileron_pin_depth
+def get_hinge_start_workplane(offset=0):
+    hinge_line_start_Z = aileron_start_norm_span*wing.wing_length-offset
+    hinge_line_end_Z = (aileron_start_norm_span+aileron_length)*wing.wing_length+offset
 
-    hinge_line_start = np.append(section_generator.getCamberPoint(aileron_start_chord, hinge_line_start_Z), [hinge_line_start_Z])
-    hinge_line_end = np.append(section_generator.getCamberPoint(aileron_start_chord, hinge_line_end_Z), [hinge_line_end_Z])
+    hinge_line_start = np.append(wing.getCamberPoint(aileron_start_chord, hinge_line_start_Z), [hinge_line_start_Z])
+    hinge_line_end = np.append(wing.getCamberPoint(aileron_start_chord, hinge_line_end_Z), [hinge_line_end_Z])
 
     hinge_line_normal = (hinge_line_end-hinge_line_start)/np.linalg.norm(hinge_line_end-hinge_line_start)
     xdir = np.asarray((1.,0.,0.))
     xdir = xdir-hinge_line_normal*xdir.dot(hinge_line_normal)
-    hinge_start_plane = cq.Plane(tuple(hinge_line_start), tuple(xdir), tuple(hinge_line_normal))
+    return cq.Workplane(cq.Plane(tuple(hinge_line_start), tuple(xdir), tuple(hinge_line_normal)),origin=tuple(hinge_line_start))
 
-    return cq.Workplane(hinge_start_plane,origin=tuple(hinge_line_start)).circle(aileron_hinge_radius).extrude(aileron_length*section_generator.wing_length)
+def generate_hinge_pin():
+    wp = get_hinge_start_workplane(aileron_pin_depth)
+    return wp.circle(aileron_pin_radius).extrude(aileron_length*wing.wing_length)
 
-hinge = generate_hinge()
-wing_internal_volume = generate_wing_internal_volume()
+def generate_aileron_spanwise_cut():
+    cut_inside_radius = aileron_pin_radius+aileron_hinge_thickness
+    cut_outside_radius = aileron_pin_radius+aileron_hinge_thickness+aileron_hinge_clearance
+    hinge_line_start_Z = aileron_start_norm_span*wing.wing_length
+
+    hinge_begin_point_2d = wing.getCamberPoint(aileron_start_chord, hinge_line_start_Z)
+
+    wp = get_hinge_start_workplane()
+
+    top_fore,bot_aft = wing.getLineAcrossCamber(aileron_start_chord, aileron_max_deflection/2,hinge_line_start_Z)
+    top_aft,bot_fore = wing.getLineAcrossCamber(aileron_start_chord, -aileron_max_deflection/2,hinge_line_start_Z)
+    top_fore -= hinge_begin_point_2d
+    bot_fore -= hinge_begin_point_2d
+    top_aft -= hinge_begin_point_2d
+    bot_aft -= hinge_begin_point_2d
+
+    top_fore_norm = top_fore/np.linalg.norm(top_fore)
+    top_aft_norm = top_aft/np.linalg.norm(top_aft)
+    bot_fore_norm = bot_fore/np.linalg.norm(bot_fore)
+    bot_aft_norm = bot_aft/np.linalg.norm(bot_aft)
+    wp = wp.pushPoints([tuple(bot_aft_norm*cut_inside_radius)])
+    wp = wp.threePointArc((-cut_inside_radius,0),tuple(top_aft_norm*cut_inside_radius))
+    wp = wp.lineTo(*(top_aft*2))
+    wp = wp.radiusArc(tuple(top_fore*2), -np.linalg.norm(top_fore)*2)
+    wp = wp.lineTo(*(top_fore_norm*cut_outside_radius))
+    wp = wp.threePointArc((-cut_outside_radius,0), tuple(bot_fore_norm*cut_outside_radius))
+    wp = wp.lineTo(*(bot_fore*2))
+    wp = wp.radiusArc(tuple(bot_aft*2), -np.linalg.norm(top_fore)*2)
+
+    wp = wp.close().extrude(aileron_length*wing.wing_length)
+
+    return wp
+
+def generate_aileron_chordwise_cuts():
+    cut_outside_radius = aileron_pin_radius+aileron_hinge_thickness+aileron_hinge_clearance
+    hinge_line_start_Z = aileron_start_norm_span*wing.wing_length
+
+    hinge_begin_point_2d = wing.getCamberPoint(aileron_start_chord, hinge_line_start_Z)
+
+    wp = get_hinge_start_workplane()
+
+    top_fore,bot_aft = wing.getLineAcrossCamber(aileron_start_chord, aileron_max_deflection/2,hinge_line_start_Z)
+    top_aft,bot_fore = wing.getLineAcrossCamber(aileron_start_chord, -aileron_max_deflection/2,hinge_line_start_Z)
+    top_fore -= hinge_begin_point_2d
+    bot_fore -= hinge_begin_point_2d
+    top_aft -= hinge_begin_point_2d
+    bot_aft -= hinge_begin_point_2d
+
+    top_fore_norm = top_fore/np.linalg.norm(top_fore)
+    top_aft_norm = top_aft/np.linalg.norm(top_aft)
+    bot_fore_norm = bot_fore/np.linalg.norm(bot_fore)
+    bot_aft_norm = bot_aft/np.linalg.norm(bot_aft)
+
+    wp = wp.pushPoints([tuple(bot_fore*2)])
+    wp = wp.lineTo(*bot_fore_norm*cut_outside_radius)
+    wp = wp.threePointArc((-cut_outside_radius,0),tuple(top_fore_norm*cut_outside_radius))
+    wp = wp.lineTo(*(top_fore*2))
+    wp = wp.threePointArc((wing.root_chord/2,0), tuple(bot_fore*2))
+
+    wp = wp.close().extrude(aileron_chordwise_clearance)
+    wp = wp.add(wp.translate((0,0,aileron_length*wing.wing_length-aileron_chordwise_clearance)))
+
+    return wp
+
+
+# generate the wing volume and wing internal volume
 wing_volume = generate_wing_volume()
+wing_internal_volume = wing_volume-wing_volume.shell(-skin_thickness)
+#wing_internal_volume = generate_wing_internal_volume()
+
+# cut hinge pin out
+hinge_pin = generate_hinge_pin()
+wing_volume -= hinge_pin
+wing_internal_volume -= hinge_pin+hinge_pin.shell(skin_thickness)
+
+# cut spanwise_cut
+spanwise_cut = generate_aileron_spanwise_cut()
+wing_volume -= spanwise_cut
+wing_internal_volume -= spanwise_cut+spanwise_cut.shell(skin_thickness)
+
+# cut chordwise cut
+chordwise_cuts = generate_aileron_chordwise_cuts()
+wing_volume -= chordwise_cuts
+for solid in chordwise_cuts.solids().all():
+    wing_internal_volume -= solid+solid.shell(skin_thickness)
+
+wing_volume -= cq.Workplane('XY').box(500,500,100)
+del solid
+del chordwise_cuts
+del spanwise_cut
+del hinge_pin
+#del wing_volume

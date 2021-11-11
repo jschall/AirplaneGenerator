@@ -61,9 +61,11 @@ class Airfoil:
         self.normCamberLine = [x-aeroCenter for x in self.normCamberLine]
         self.halfChordPoint = polygonutil.traversePolyLine(self.normChordLine,0.5)
 
-        self.thickestCamberDist = minimize(lambda d: -self.getNormThicknessAtCamberPoint(d), self.normCamberLineLength/2.).x[0]
+        self.thickestCamberDist = minimize(lambda d: -self.getNormThicknessAtCamberPoint(d), self.normCamberLineLength/2., bounds=((0.,1.),), method='Nelder-Mead').x[0]
 
-    def getNormLineAcrossCamber(self,d,lineAngle):
+    def getNormLineAcrossCamber(self,d,lineAngle=0):
+        assert d >= 0 and d <= 1
+        lineAngle = lineAngle+pi/2
         camberPoint = polygonutil.traversePolyLine(self.normCamberLine,d)
         camberAngle = polygonutil.getPolyLineDirection(self.normCamberLine,d)
 
@@ -72,9 +74,18 @@ class Airfoil:
         return (pt1,pt2)
 
     def getNormThicknessAtCamberPoint(self,d):
+        assert d >= 0 and d <= 1
         pt1,pt2 = self.getNormLineAcrossCamber(d,pi/2)
 
         return np.linalg.norm(pt2-pt1)
+
+    def getNormCamberPoint(self, d):
+        assert d >= 0 and d <= 1
+        return polygonutil.traversePolyLine(self.normCamberLine,d)
+
+    def getNormCamberAngle(self, d):
+        assert d >= 0 and d <= 1
+        return polygonutil.getPolyLineDirection(self.normCamberLine,d)
 
 if __name__ == "__main__":
     importer = Airfoil("clarky-il.csv")
